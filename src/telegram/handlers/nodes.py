@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, types
-from src.database import get_all_nodes, toggle_node_enabled
-from src.telegram.keyboards import nodes_kb
+from src.database import get_all_nodes_ordered, toggle_node_enabled
+from src.telegram.keyboards import nodes_kb, translate_status
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -9,14 +9,14 @@ router = Router()
 
 @router.callback_query(lambda c: c.data == "menu_nodes")
 async def menu_nodes(callback: types.CallbackQuery):
-    nodes = await get_all_nodes()
+    nodes = await get_all_nodes_ordered()
     text = "🖥️ <b>Ноды</b>\n\nНажмите на ноду, чтобы включить/выключить мониторинг:\n\n"
     for node in nodes:
-        status = node.get("last_status", "UNKNOWN")
+        status = translate_status(node.get("last_status") or "UNKNOWN")
         enabled = "✅" if node.get("enabled") else "❌"
         ignored = " (игнор)" if node.get("ignored") else ""
         archived = " (архив)" if node.get("archived") else ""
-        text += f"{enabled} <b>{node['name']}</b> — {status}{ignored}{archived}\n"
+        text += f"{enabled} <b>{node['name']}</b> — Статус: {status}{ignored}{archived}\n"
 
     await callback.message.edit_text(text, reply_markup=nodes_kb(nodes))
     await callback.answer()

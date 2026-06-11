@@ -6,7 +6,7 @@ from src.database import (
     get_inbound_by_uuid,
     toggle_inbound_enabled,
 )
-from src.telegram.keyboards import UNSUPPORTED_PROTOCOLS, inbounds_kb, is_inbound_supported
+from src.telegram.keyboards import UNSUPPORTED_PROTOCOLS, inbounds_kb, is_inbound_supported, translate_status
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -18,14 +18,14 @@ async def menu_inbounds(callback: types.CallbackQuery):
     enabled_uuids = await get_enabled_inbound_uuids()
     text = "🌐 <b>Inbound'ы</b>\n\nНажмите на inbound, чтобы включить/выключить мониторинг:\n\n"
     for ib in inbounds:
-        status = ib.get("last_status", "UNKNOWN")
+        status = translate_status(ib.get("last_status") or "UNKNOWN")
         enabled = "✅" if ib.get("enabled") else "❌"
         ignored = " (игнор)" if ib.get("ignored") else ""
         archived = " (архив)" if ib.get("archived") else ""
         proto = f"{ib.get('protocol') or '?'}/{ib.get('network') or '?'}"
-        disabled = " (disabled в панели)" if ib.get("is_disabled") else ""
+        disabled = " (отключён в панели)" if ib.get("is_disabled") else ""
         unsupported = "" if is_inbound_supported(ib) else " 🚫 не поддерживается"
-        text += f"{enabled} <b>{ib.get('remark') or ib['uuid'][:8]}</b> — {status} [{proto}]{unsupported}{disabled}{ignored}{archived}\n"
+        text += f"{enabled} <b>{ib.get('remark') or ib['uuid'][:8]}</b> — Статус: {status} [{proto}]{unsupported}{disabled}{ignored}{archived}\n"
 
     await callback.message.edit_text(text, reply_markup=inbounds_kb(inbounds, enabled_uuids).as_markup())
     await callback.answer()

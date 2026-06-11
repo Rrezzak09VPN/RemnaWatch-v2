@@ -42,6 +42,25 @@ def nodes_kb(nodes: list[dict]) -> InlineKeyboardMarkup:
 # Протоколы/транспорты, которые sing-box не поддерживает — мониторинг для них недоступен.
 UNSUPPORTED_PROTOCOLS = {"xhttp", "tuic", "hysteria"}
 
+# Переводы машинных статусов (в БД и логах остаются английские — для совместимости).
+STATUS_TRANSLATIONS = {
+    # Node statuses
+    "UP": "Активна",
+    "DOWN": "Недоступна",
+    "DISABLED": "Отключена",
+    "UNKNOWN": "Неизвестно",
+    # Inbound statuses
+    "HEALTHY": "Работает",
+    "WARNING": "Предупреждение",
+    "BROKEN": "Не работает",
+    "SKIPPED_UNSUPPORTED": "Пропущен (не поддерживается)",
+    "CONFIG_ERROR": "Ошибка конфигурации",
+}
+
+
+def translate_status(status: str) -> str:
+    return STATUS_TRANSLATIONS.get(status, status)
+
 
 def is_inbound_supported(ib: dict) -> bool:
     protocol = (ib.get("protocol") or "").lower()

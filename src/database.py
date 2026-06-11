@@ -403,6 +403,20 @@ async def get_all_nodes() -> list[dict]:
         await db.close()
 
 
+async def get_all_nodes_ordered() -> list[dict]:
+    """Возвращает все неархивные ноды, отсортированные по view_position (порядок панели)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT * FROM nodes
+               WHERE archived = 0
+               ORDER BY view_position, name"""
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
 async def get_enabled_nodes() -> list[dict]:
     db = await get_db()
     try:
