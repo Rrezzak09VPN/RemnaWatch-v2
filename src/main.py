@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src.config import settings
@@ -23,11 +24,18 @@ async def setup_logging():
     log_path = Path(settings.log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    file_handler = RotatingFileHandler(
+        str(log_path),
+        maxBytes=20 * 1024 * 1024,  # 20 MB на файл
+        backupCount=5,              # 5 файлов = 100 MB максимум
+        encoding="utf-8",
+    )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler(str(log_path)),
+            file_handler,
             logging.StreamHandler(sys.stdout),
         ],
     )

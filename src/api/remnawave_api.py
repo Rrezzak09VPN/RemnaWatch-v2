@@ -37,12 +37,12 @@ class RemnawaveAPI:
         if data is None:
             return None
 
-        logger.info("API %s response type: %s", path, type(data).__name__)
+        logger.debug("API %s response type: %s", path, type(data).__name__)
         if isinstance(data, dict):
-            logger.info("API %s response keys: %s", path, list(data.keys()))
+            logger.debug("API %s response keys: %s", path, list(data.keys()))
             if "response" in data:
                 result = data["response"]
-                logger.info(
+                logger.debug(
                     "API %s .response type: %s, count: %s",
                     path,
                     type(result).__name__,
@@ -53,7 +53,7 @@ class RemnawaveAPI:
                 if key in data:
                     return data[key]
         elif isinstance(data, list):
-            logger.info("API %s returned list with %s items", path, len(data))
+            logger.debug("API %s returned list with %s items", path, len(data))
         return data
 
     async def get_nodes(self) -> list[dict]:

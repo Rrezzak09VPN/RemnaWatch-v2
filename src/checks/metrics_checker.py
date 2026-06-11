@@ -7,6 +7,10 @@ from src.database import get_enabled_nodes, get_thresholds, update_node_metrics
 logger = logging.getLogger(__name__)
 
 
+# Ноды, по которым уже выдан WARNING об отсутствии метрик (чтобы не спамить лог).
+_warned_no_metrics: set[str] = set()
+
+
 def _unwrap_node(data: dict | None) -> dict | None:
     if not isinstance(data, dict):
         return None
@@ -14,15 +18,6 @@ def _unwrap_node(data: dict | None) -> dict | None:
         if isinstance(data.get(key), dict):
             return data[key]
     return data
-
-
-def _metric(node: dict, key: str, default=None):
-    if node.get(key) is not None:
-        return node.get(key)
-    system = node.get("system")
-    if isinstance(system, dict) and system.get(key) is not None:
-        return system.get(key)
-    return default
 
 
 def _normalize_load(value: Any) -> list[float]:
@@ -42,7 +37,9 @@ def _normalize_load(value: Any) -> list[float]:
 def _has_metrics(node: dict | None) -> bool:
     if not node:
         return False
-    return _metric(node, "memoryTotal") is not None and _metric(node, "memoryUsed") is not None
+    # Метрики лежат в корне объекта ноды (memoryTotal, memoryUsed, memoryFree,
+    # loadAvg, cpus), а не во вложенном system. Ищем в корне.
+    return node.get("memoryTotal") is not None
 
 
 async def fetch_node_metrics(api: RemnawaveAPI, node_uuid: str, base_node: dict | None = None) -> dict | None:
@@ -54,36 +51,45 @@ async def fetch_node_metrics(api: RemnawaveAPI, node_uuid: str, base_node: dict 
             merged.update(detail)
             node = merged
 
+    name = node.get("name", node_uuid[:8]) if node else node_uuid[:8]
+
     if not _has_metrics(node):
-        logger.warning(
-            "Node %s: no metrics in API response, keys=%s system_keys=%s",
-            node.get("name", node_uuid[:8]) if node else node_uuid[:8],
-            list(node.keys()) if node else [],
-            list((node.get("system") or {}).keys()) if isinstance(node.get("system"), dict) else [],
-        )
+        # Логируем ОДИН раз на ноду, а не каждый раз
+        if node_uuid not in _warned_no_metrics:
+            _warned_no_metrics.add(node_uuid)
+            logger.warning("Node %s: no metrics in API response", name)
         return None
+    _warned_no_metrics.discard(node_uuid)
 
     try:
-        mem_total = int(_metric(node, "memoryTotal", 0) or 0)
-        mem_used = int(_metric(node, "memoryUsed", 0) or 0)
-        mem_free = int(_metric(node, "memoryFree", max(mem_total - mem_used, 0)) or 0)
-        cpus = int(_metric(node, "cpus", 1) or 1)
+        # Читаем напрямую из корня
+        mem_total = int(node.get("memoryTotal", 0) or 0)
+        mem_used = int(node.get("memoryUsed", 0) or 0)
+
+        # Если memoryUsed отсутствует, вычисляем из memoryFree
+        if mem_used == 0:
+            mem_free = int(node.get("memoryFree", 0) or 0)
+            mem_used = max(mem_total - mem_free, 0)
+        else:
+            mem_free = int(node.get("memoryFree", max(mem_total - mem_used, 0)) or 0)
+
+        cpus = int(node.get("cpus", 1) or 1)
     except (TypeError, ValueError):
-        logger.warning("Node %s: invalid metrics types", node.get("name", node_uuid[:8]))
+        logger.warning("Node %s: invalid metrics types", name)
         return None
 
     if mem_total <= 0:
-        logger.warning("Node %s: memoryTotal=0 in API response", node.get("name", node_uuid[:8]))
+        logger.warning("Node %s: memoryTotal=0 in API response", name)
         return None
 
     return {
         "uuid": node_uuid,
-        "name": node.get("name", node_uuid[:8]),
+        "name": name,
         "cpus": max(cpus, 1),
         "memoryTotal": mem_total,
         "memoryUsed": mem_used,
         "memoryFree": mem_free,
-        "loadAvg": _normalize_load(_metric(node, "loadAvg", [0, 0, 0])),
+        "loadAvg": _normalize_load(node.get("loadAvg") or [0, 0, 0]),
         "isConnected": bool(node.get("isConnected")),
         "isDisabled": bool(node.get("isDisabled")),
     }
