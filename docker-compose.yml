@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  remnawatch:
+    build: .
+    container_name: remnawatch
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - TZ=Europe/Moscow
