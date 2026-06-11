@@ -7,7 +7,7 @@ from src.checks.probe import check_connectivity, resolve_host_ips
 from src.checks.singbox_runner import SingBoxRunner
 from src.config import settings
 from src.crypto.x25519 import compute_public_key
-from src.database import get_enabled_inbounds, get_setting, update_inbound_status
+from src.database import get_enabled_inbounds_ordered, update_inbound_status
 
 logger = logging.getLogger(__name__)
 
@@ -202,62 +202,68 @@ async def _ip_matches(host: dict, ip: str | None) -> bool:
     return ip in resolved
 
 
+# Таймаут на полную проверку одного inbound'а (запуск sing-box + probe + IP-проверка).
+CHECK_TIMEOUT_SECONDS = 60
+
+
 async def check_inbound(
     inbound: dict,
     config_inbound: dict | None,
     api: RemnawaveAPI,
     runner: SingBoxRunner,
-    semaphore: asyncio.Semaphore,
     monitor_user: dict,
 ) -> CheckResult:
-    async with semaphore:
-        name = inbound.get("remark") or inbound.get("uuid", "unknown")[:8]
-        try:
-            if inbound.get("is_disabled"):
-                await update_inbound_status(inbound["uuid"], "DISABLED", "", "host disabled in Remnawave")
-                logger.info("Inbound %s skipped: host disabled in Remnawave", name)
-                return CheckResult("DISABLED")
+    name = inbound.get("remark") or inbound.get("uuid", "unknown")[:8]
+    try:
+        if inbound.get("is_disabled"):
+            await update_inbound_status(inbound["uuid"], "DISABLED", "", "host disabled in Remnawave")
+            logger.info("Inbound %s skipped: host disabled in Remnawave", name)
+            return CheckResult("DISABLED")
 
-            if not config_inbound:
-                error = f"config_inbound_uuid={inbound.get('config_inbound_uuid')} not found"
-                await update_inbound_status(inbound["uuid"], "CONFIG_ERROR", "", error)
-                logger.warning("Inbound %s: %s", name, error)
-                return CheckResult("CONFIG_ERROR", error=error)
+        if not config_inbound:
+            error = f"config_inbound_uuid={inbound.get('config_inbound_uuid')} not found"
+            await update_inbound_status(inbound["uuid"], "CONFIG_ERROR", "", error)
+            logger.warning("Inbound %s: %s", name, error)
+            return CheckResult("CONFIG_ERROR", error=error)
 
-            vless_uuid = monitor_user.get("vlessUuid") or monitor_user.get("vless_uuid")
-            if not vless_uuid:
-                error = "monitoring user has no vlessUuid"
-                await update_inbound_status(inbound["uuid"], "CONFIG_ERROR", "", error)
-                return CheckResult("CONFIG_ERROR", error=error)
+        vless_uuid = monitor_user.get("vlessUuid") or monitor_user.get("vless_uuid")
+        if not vless_uuid:
+            error = "monitoring user has no vlessUuid"
+            await update_inbound_status(inbound["uuid"], "CONFIG_ERROR", "", error)
+            return CheckResult("CONFIG_ERROR", error=error)
 
-            singbox_cfg = build_singbox_config(inbound, config_inbound, vless_uuid)
-            if singbox_cfg is None:
-                await update_inbound_status(inbound["uuid"], "SKIPPED_UNSUPPORTED", "", "unsupported by sing-box")
-                return CheckResult("SKIPPED_UNSUPPORTED")
+        singbox_cfg = build_singbox_config(inbound, config_inbound, vless_uuid)
+        if singbox_cfg is None:
+            await update_inbound_status(inbound["uuid"], "SKIPPED_UNSUPPORTED", "", "unsupported by sing-box")
+            return CheckResult("SKIPPED_UNSUPPORTED")
 
-            async with runner.run(singbox_cfg, label=name) as (port, _proc):
-                ok, ip, error = await check_connectivity(f"127.0.0.1:{port}")
-                if not ok:
-                    status = "BROKEN"
-                elif not await _ip_matches(inbound, ip):
-                    status = "WARNING"
-                    error = f"wrong exit ip: got {ip}, expected {inbound.get('expected_ip') or inbound.get('server')}"
-                else:
-                    status = "HEALTHY"
+        async with runner.run(singbox_cfg, label=name) as (port, _proc):
+            ok, ip, error = await check_connectivity(f"127.0.0.1:{port}")
+            if not ok:
+                status = "BROKEN"
+            elif not await _ip_matches(inbound, ip):
+                status = "WARNING"
+                error = f"wrong exit ip: got {ip}, expected {inbound.get('expected_ip') or inbound.get('server')}"
+            else:
+                status = "HEALTHY"
 
-                await update_inbound_status(inbound["uuid"], status, ip or "", error)
-                logger.info("Inbound %s: %s (IP: %s) %s", name, status, ip or "-", error or "")
-                return CheckResult(status, ip or "", error or "")
+            await update_inbound_status(inbound["uuid"], status, ip or "", error)
+            logger.info("Inbound %s: %s (IP: %s) %s", name, status, ip or "-", error or "")
+            return CheckResult(status, ip or "", error or "")
 
-        except Exception as e:
-            error = f"{type(e).__name__}: {e}"
-            logger.exception("Inbound %s check failed: %s", name, error)
-            await update_inbound_status(inbound["uuid"], "BROKEN", "", error)
-            return CheckResult("BROKEN", error=error)
+    except asyncio.CancelledError:
+        # Пробрасываем отмену (в т.ч. от asyncio.wait_for), чтобы таймаут обработал вызывающий код.
+        raise
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        logger.exception("Inbound %s check failed: %s", name, error)
+        await update_inbound_status(inbound["uuid"], "BROKEN", "", error)
+        return CheckResult("BROKEN", error=error)
 
 
 async def check_inbounds(api: RemnawaveAPI, alert_engine):
-    inbounds = await get_enabled_inbounds()
+    """Проверяет inbound'ы строго по очереди, один за другим, в порядке панели Remnawave."""
+    inbounds = await get_enabled_inbounds_ordered()
     if not inbounds:
         logger.info("No enabled inbounds for check")
         return
@@ -270,32 +276,39 @@ async def check_inbounds(api: RemnawaveAPI, alert_engine):
         logger.warning("Monitoring user %s is not ACTIVE: %s", settings.monitor_user_uuid, monitor_user.get("status"))
 
     config_map = await api.get_all_config_inbounds_map()
-    logger.info("Inbound check started: %s hosts, %s config inbounds", len(inbounds), len(config_map))
+    logger.info("Inbound check started: %s hosts, %s config inbounds (sequential)", len(inbounds), len(config_map))
 
-    parallel_count = max(1, int(await get_setting("singbox_parallel_count") or 1))
-    semaphore = asyncio.Semaphore(parallel_count)
     runner = SingBoxRunner(settings.singbox_bin)
-
-    tasks = [
-        check_inbound(
-            ib,
-            config_map.get(str(ib.get("config_inbound_uuid") or "").lower()),
-            api,
-            runner,
-            semaphore,
-            monitor_user,
-        )
-        for ib in inbounds
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    total = len(inbounds)
 
     checked = skipped = broken = warnings = 0
-    for inbound, result in zip(inbounds, results):
-        if isinstance(result, Exception):
-            logger.exception("Inbound %s task crashed", inbound.get("remark", inbound["uuid"][:8]), exc_info=result)
-            await alert_engine.process("inbound", inbound["uuid"], "broken", True, str(result))
-            broken += 1
-            continue
+    for i, inbound in enumerate(inbounds, 1):
+        name = inbound.get("remark") or inbound.get("uuid", "unknown")[:8]
+        logger.info("Checking host %s/%s: %s", i, total, name)
+
+        try:
+            # Жёсткий таймаут на каждую проверку: один "мёртвый" хост
+            # больше не блокирует очередь на 9+ минут.
+            result = await asyncio.wait_for(
+                check_inbound(
+                    inbound,
+                    config_map.get(str(inbound.get("config_inbound_uuid") or "").lower()),
+                    api,
+                    runner,
+                    monitor_user,
+                ),
+                timeout=CHECK_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            error = f"Timeout ({CHECK_TIMEOUT_SECONDS}s)"
+            logger.error("Timeout checking %s (%ss)", name, CHECK_TIMEOUT_SECONDS)
+            await update_inbound_status(inbound["uuid"], "BROKEN", "", error)
+            result = CheckResult("BROKEN", error=error)
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            logger.exception("Error checking %s", name)
+            await update_inbound_status(inbound["uuid"], "BROKEN", "", error)
+            result = CheckResult("BROKEN", error=error)
 
         if result.status in {"HEALTHY", "WARNING", "BROKEN"}:
             checked += 1

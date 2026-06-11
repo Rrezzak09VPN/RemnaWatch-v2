@@ -4,7 +4,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from src.database import get_all_nodes, get_thresholds, set_threshold
-from src.telegram.keyboards import thresholds_kb, threshold_detail_kb, back_kb
+from src.telegram.keyboards import thresholds_kb, threshold_detail_kb, threshold_cancel_kb, back_kb
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -24,7 +24,10 @@ async def menu_thresholds(callback: types.CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("thresholds_node:"))
-async def thresholds_node(callback: types.CallbackQuery):
+async def thresholds_node(callback: types.CallbackQuery, state: FSMContext):
+    # Этот хэндлер — также цель кнопки "❌ Отмена": сбрасываем FSM-состояние,
+    # чтобы следующее текстовое сообщение не перехватывалось вводом порога.
+    await state.clear()
     uuid = callback.data.split(":")[1]
     thresholds = await get_thresholds(uuid)
     nodes = await get_all_nodes()
@@ -45,7 +48,10 @@ async def set_threshold_mem(callback: types.CallbackQuery, state: FSMContext):
     uuid = callback.data.split(":")[1]
     await state.set_data({"node_uuid": uuid, "key": "memory_percent"})
     await state.set_state(ThresholdState.waiting_mem)
-    await callback.message.edit_text("Введите новое значение RAM threshold (0-100):")
+    await callback.message.edit_text(
+        "Введите новое значение RAM threshold (0-100):",
+        reply_markup=threshold_cancel_kb(uuid),
+    )
     await callback.answer()
 
 
@@ -54,7 +60,10 @@ async def set_threshold_load(callback: types.CallbackQuery, state: FSMContext):
     uuid = callback.data.split(":")[1]
     await state.set_data({"node_uuid": uuid, "key": "load_per_core"})
     await state.set_state(ThresholdState.waiting_load)
-    await callback.message.edit_text("Введите новое значение Load per core (например 1.5):")
+    await callback.message.edit_text(
+        "Введите новое значение Load per core (например 1.5):",
+        reply_markup=threshold_cancel_kb(uuid),
+    )
     await callback.answer()
 
 

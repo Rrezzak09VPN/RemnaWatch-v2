@@ -12,6 +12,18 @@ from src.database import (
 
 logger = logging.getLogger(__name__)
 
+# Тексты восстановления: описывают НОРМАЛЬНОЕ состояние, а не повтор текста проблемы.
+RECOVERY_TEXTS = {
+    "disabled": "снова включена в панели Remnawave",
+    "down": "снова доступна",
+    "broken": "снова пропускает трафик",
+    "high_memory": "использование RAM в норме",
+    "high_load": "нагрузка CPU в норме",
+    "high_traffic": "расход трафика в норме",
+    "traffic_limit": "лимит трафика больше не превышен",
+    "wrong_ip": "выходной IP снова корректный",
+}
+
 
 class AlertEngine:
     def __init__(self, send_notification_cb=None):
@@ -114,9 +126,11 @@ class AlertEngine:
     async def _bad_text(self, obj_type: str, obj_uuid: str, incident_type: str, details: str) -> str:
         obj_name = await self._get_object_name(obj_type, obj_uuid)
         if incident_type == "disabled":
-            text = f"⚪ {obj_name} отключена в панели Remnawave"
+            text = f"🔴 {obj_name} отключена в панели Remnawave"
         elif incident_type == "down":
             text = f"🔴 {obj_name}: нода недоступна"
+        elif incident_type == "broken":
+            text = f"🔴 {obj_name}: inbound не пропускает трафик"
         elif incident_type in {"high_memory", "high_load"}:
             text = f"⚠️ {obj_name}: {self._incident_label(incident_type)}"
         elif incident_type in {"high_traffic", "traffic_limit"}:
@@ -131,13 +145,8 @@ class AlertEngine:
 
     async def _recovery_text(self, obj_type: str, obj_uuid: str, incident_type: str) -> str:
         obj_name = await self._get_object_name(obj_type, obj_uuid)
-        if incident_type == "disabled":
-            return f"✅ {obj_name} снова включена в панели Remnawave"
-        if incident_type == "down":
-            return f"✅ {obj_name} снова доступна"
-        if incident_type == "wrong_ip":
-            return f"✅ {obj_name}: выходной IP снова корректный"
-        return f"✅ {obj_name}: восстановлено — {self._incident_label(incident_type)}"
+        recovery_msg = RECOVERY_TEXTS.get(incident_type, "восстановлено")
+        return f"✅ {obj_name} {recovery_msg}"
 
     async def _get_object_name(self, obj_type: str, obj_uuid: str) -> str:
         if obj_type in {"node", "metric", "traffic"}:

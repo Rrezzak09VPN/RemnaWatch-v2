@@ -39,18 +39,40 @@ def nodes_kb(nodes: list[dict]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def inbounds_kb(inbounds: list[dict]) -> InlineKeyboardMarkup:
+# Протоколы/транспорты, которые sing-box не поддерживает — мониторинг для них недоступен.
+UNSUPPORTED_PROTOCOLS = {"xhttp", "tuic", "hysteria"}
+
+
+def is_inbound_supported(ib: dict) -> bool:
+    protocol = (ib.get("protocol") or "").lower()
+    network = (ib.get("network") or "").lower()
+    return protocol not in UNSUPPORTED_PROTOCOLS and network not in UNSUPPORTED_PROTOCOLS
+
+
+def inbounds_kb(inbounds: list[dict], enabled_uuids: set[str]) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+
     for ib in inbounds:
-        status_emoji = "✅" if ib.get("enabled") else "❌"
-        name = ib.get("remark", ib["uuid"][:8])
-        builder.button(
-            text=f"{status_emoji} {name}",
-            callback_data=f"toggle_inbound:{ib['uuid']}",
-        )
+        uuid = ib["uuid"]
+        name = ib.get("remark") or uuid[:8]
+
+        if not is_inbound_supported(ib):
+            network = (ib.get("network") or ib.get("protocol") or "?").lower()
+            # Неактивная кнопка: нажатие ничего не переключает
+            builder.button(
+                text=f"🚫 {name} ({network} не поддерживается)",
+                callback_data=f"noop:{uuid}",
+            )
+        else:
+            marker = "✅" if uuid in enabled_uuids else "⬜"
+            builder.button(
+                text=f"{marker} {name}",
+                callback_data=f"toggle_inbound:{uuid}",
+            )
+
     builder.button(text="◀️ Назад", callback_data="main_menu")
     builder.adjust(1)
-    return builder.as_markup()
+    return builder
 
 
 def intervals_kb(current: dict) -> InlineKeyboardMarkup:
@@ -111,13 +133,6 @@ def parallel_kb(current: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def object_action_kb(obj_type: str, uuid: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Включить", callback_data=f"toggle_{obj_type}:{uuid}")
-    builder.button(text="❌ Игнорировать", callback_data=f"ignore_{obj_type}:{uuid}")
-    return builder.as_markup()
-
-
 def new_objects_kb(objects: list[dict]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for obj in objects:
@@ -145,8 +160,23 @@ def thresholds_kb(nodes: list[dict]) -> InlineKeyboardMarkup:
 
 def threshold_detail_kb(node_uuid: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="📊 RAM threshold", callback_data=f"set_threshold_mem:{node_uuid}")
-    builder.button(text="📊 Load/core", callback_data=f"set_threshold_load:{node_uuid}")
-    builder.button(text="◀️ Назад", callback_data="menu_thresholds")
+    builder.button(text="🧠 RAM threshold", callback_data=f"set_threshold_mem:{node_uuid}")
+    builder.button(text="⚡ Load threshold", callback_data=f"set_threshold_load:{node_uuid}")
+    builder.button(text="◀️ Назад к списку нод", callback_data="menu_thresholds")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def threshold_cancel_kb(node_uuid: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"thresholds_node:{node_uuid}")
+    return builder.as_markup()
+
+
+def object_action_kb(obj_type: str, uuid: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Включить", callback_data=f"toggle_{obj_type}:{uuid}")
+    builder.button(text="❌ Игнорировать", callback_data=f"ignore_{obj_type}:{uuid}")
+    builder.button(text="◀️ Назад", callback_data="new_objects")
+    builder.adjust(2, 1)
     return builder.as_markup()

@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     memory_free_bytes INTEGER,
     load_avg_1 REAL,
     load_avg_5 REAL,
-    load_avg_15 REAL
+    load_avg_15 REAL,
+    view_position INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS inbounds (
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS inbounds (
     security_layer TEXT,
     expected_ip TEXT,
     last_error TEXT,
+    view_position INTEGER DEFAULT 0,
     FOREIGN KEY (node_uuid) REFERENCES nodes(uuid)
 );
 
@@ -140,6 +142,7 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("load_avg_1", "REAL"),
         ("load_avg_5", "REAL"),
         ("load_avg_15", "REAL"),
+        ("view_position", "INTEGER DEFAULT 0"),
     ],
     "inbounds": [
         ("sni", "TEXT"),
@@ -152,6 +155,7 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("security_layer", "TEXT"),
         ("expected_ip", "TEXT"),
         ("last_error", "TEXT"),
+        ("view_position", "INTEGER DEFAULT 0"),
     ],
 }
 
@@ -246,8 +250,8 @@ async def upsert_node(node: dict):
                    uuid, name, address, expected_ip,
                    traffic_used_bytes, traffic_limit_bytes, traffic_reset_day, is_traffic_tracking_active,
                    cpus, memory_total_bytes, memory_used_bytes, memory_free_bytes,
-                   load_avg_1, load_avg_5, load_avg_15, archived
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                   load_avg_1, load_avg_5, load_avg_15, view_position, archived
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                ON CONFLICT(uuid) DO UPDATE SET
                    name=excluded.name,
                    address=excluded.address,
@@ -263,6 +267,7 @@ async def upsert_node(node: dict):
                    load_avg_1=excluded.load_avg_1,
                    load_avg_5=excluded.load_avg_5,
                    load_avg_15=excluded.load_avg_15,
+                   view_position=excluded.view_position,
                    archived=0""",
             (
                 node["uuid"],
@@ -278,6 +283,7 @@ async def upsert_node(node: dict):
                 node.get("memoryUsed") or system.get("memoryUsed"),
                 node.get("memoryFree") or system.get("memoryFree"),
                 load[0], load[1], load[2],
+                _as_int(node.get("viewPosition"), 0),
             ),
         )
         await db.commit()
@@ -347,8 +353,9 @@ async def upsert_host(host: dict, config_inbound: dict | None, inbound_uuid: str
         await db.execute(
             """INSERT INTO inbounds (
                    uuid, remark, server, port, protocol, network, security, config_inbound_uuid, node_uuid,
-                   sni, fingerprint, host, path, alpn, allow_insecure, is_disabled, security_layer, expected_ip, archived
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                   sni, fingerprint, host, path, alpn, allow_insecure, is_disabled, security_layer, expected_ip,
+                   view_position, archived
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                ON CONFLICT(uuid) DO UPDATE SET
                    remark=excluded.remark,
                    server=excluded.server,
@@ -367,6 +374,7 @@ async def upsert_host(host: dict, config_inbound: dict | None, inbound_uuid: str
                    is_disabled=excluded.is_disabled,
                    security_layer=excluded.security_layer,
                    expected_ip=excluded.expected_ip,
+                   view_position=excluded.view_position,
                    archived=0""",
             (
                 host["uuid"], remark, host.get("address", ""), host.get("port", 0),
@@ -375,6 +383,7 @@ async def upsert_host(host: dict, config_inbound: dict | None, inbound_uuid: str
                 host.get("host") or "", host.get("path") or "", alpn or "",
                 int(bool(host.get("allowInsecure"))), int(bool(host.get("isDisabled"))),
                 host.get("securityLayer") or "", host.get("expectedIp") or "",
+                _as_int(host.get("viewPosition"), 0),
             ),
         )
         await db.commit()
@@ -388,7 +397,7 @@ async def upsert_host(host: dict, config_inbound: dict | None, inbound_uuid: str
 async def get_all_nodes() -> list[dict]:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM nodes WHERE archived=0 ORDER BY name")
+        cursor = await db.execute("SELECT * FROM nodes WHERE archived=0 ORDER BY view_position, name")
         return await cursor.fetchall()
     finally:
         await db.close()
@@ -397,7 +406,7 @@ async def get_all_nodes() -> list[dict]:
 async def get_enabled_nodes() -> list[dict]:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM nodes WHERE enabled=1 AND ignored=0 AND archived=0")
+        cursor = await db.execute("SELECT * FROM nodes WHERE enabled=1 AND ignored=0 AND archived=0 ORDER BY view_position, name")
         return await cursor.fetchall()
     finally:
         await db.close()
@@ -406,7 +415,7 @@ async def get_enabled_nodes() -> list[dict]:
 async def get_all_inbounds() -> list[dict]:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM inbounds WHERE archived=0 ORDER BY remark")
+        cursor = await db.execute("SELECT * FROM inbounds WHERE archived=0 ORDER BY view_position, remark")
         return await cursor.fetchall()
     finally:
         await db.close()
@@ -415,8 +424,49 @@ async def get_all_inbounds() -> list[dict]:
 async def get_enabled_inbounds() -> list[dict]:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM inbounds WHERE enabled=1 AND ignored=0 AND archived=0")
+        cursor = await db.execute("SELECT * FROM inbounds WHERE enabled=1 AND ignored=0 AND archived=0 ORDER BY view_position, remark")
         return await cursor.fetchall()
+    finally:
+        await db.close()
+
+
+async def get_enabled_inbounds_ordered() -> list[dict]:
+    """Возвращает список включённых inbound'ов, отсортированных по view_position ноды,
+    затем по view_position самого inbound'а (порядок панели Remnawave).
+
+    LEFT JOIN вместо INNER JOIN: node_uuid у хоста может быть NULL (host из /api/hosts
+    не всегда привязан к ноде) — такие inbound'ы не должны выпадать из проверки.
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT i.*, COALESCE(n.view_position, 0) AS node_view_position
+               FROM inbounds i
+               LEFT JOIN nodes n ON i.node_uuid = n.uuid
+               WHERE i.enabled = 1 AND i.ignored = 0 AND i.archived = 0
+               ORDER BY COALESCE(n.view_position, 0), i.view_position, i.remark"""
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_inbound_by_uuid(uuid: str) -> dict | None:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM inbounds WHERE uuid=?", (uuid,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_enabled_inbound_uuids() -> set[str]:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT uuid FROM inbounds WHERE enabled=1 AND ignored=0 AND archived=0")
+        rows = await cursor.fetchall()
+        return {row["uuid"] for row in rows}
     finally:
         await db.close()
 
