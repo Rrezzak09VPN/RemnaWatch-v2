@@ -1,55 +1,62 @@
-# RemnaWatch
+# RemnaWatch v2
 
-Telegram-бот для мониторинга Remnawave: статусы нод, системные метрики, трафик и реальная data-plane проверка inbound'ов через `sing-box`.
+Telegram-бот для мониторинга [Remnawave](https://remna.st): статусы нод, системные метрики (RAM/CPU), трафик и реальная data-plane проверка inbound'ов через `sing-box`.
 
-Проект не парсит subscription URL. Все параметры берутся из Remnawave API, потому что подписки могут зависеть от User-Agent/HWID и не являются надежным источником для мониторинга.
+Это вторая версия проекта ([первая — RemnaWatch](https://github.com/Rrezzak09VPN/RemnaWatch)). Бот не парсит subscription URL — все параметры берутся напрямую из Remnawave API.
+
+## Что нового в v2
+
+- **Ротация логов** — `RotatingFileHandler`: 20 MB на файл, 5 бэкапов (максимум ~100 MB на диске). Диагностический спам API-ответов переведён на уровень DEBUG.
+- **Метрики починены** — `memoryTotal / memoryUsed / memoryFree / loadAvg / cpus` читаются из корня объекта ноды (как реально отдаёт API). Если `memoryUsed` отсутствует, вычисляется как `memoryTotal − memoryFree`. Предупреждение «no metrics» пишется один раз на ноду, а не каждые 60 секунд.
+- **Строгая очередь проверок inbound'ов** — хосты проверяются последовательно, в порядке панели, с прогрессом в логах (`Checking host 3/7: ...`) и жёстким таймаутом **60 секунд на хост**. Один «мёртвый» хост больше не блокирует очередь на 9+ минут.
+- **Порядок как в панели** — ноды и хосты сортируются по `viewPosition` из Remnawave API (в списках Telegram и в очереди проверок). Порядок переживает перезапуск.
+- **Запрет неподдерживаемых протоколов в UI** — `xhttp / tuic / hysteria` показываются как `🚫 ... (не поддерживается)` и не включаются в мониторинг (валидация и в клавиатуре, и на сервере).
+- **Корректные алерты** — отключённая нода теперь `🔴` (был белый кружок), тексты восстановления описывают нормальное состояние (`✅ Inbound X снова пропускает трафик` вместо противоречивого «восстановлено — не пропускает трафик»).
+- **Русифицированный интерфейс** — статусы в Telegram на русском (`Активна / Недоступна / Работает / Не работает / Пропущен...`). В БД и логах остаются английские коды для совместимости.
+- **Кнопка Menu** — слева от поля ввода: `/start`, `/status`, `/setup`, `/help`.
+- **Навигация** — кнопки «◀️ Назад» во всех подменю и «❌ Отмена» при вводе порогов (с корректным сбросом FSM-состояния).
 
 ## Что мониторится
 
-- **Ноды**: `UP / DOWN / DISABLED / UNKNOWN` по `/api/nodes`.
-- **Метрики железа**: CPU cores, RAM, LoadAvg. Если список `/api/nodes` не содержит метрики, бот делает детальный запрос `/api/nodes/{uuid}` и читает также вложенный блок `system`.
+- **Ноды**: статусы по `/api/nodes` (в UI: Активна / Недоступна / Отключена / Неизвестно).
+- **Метрики железа**: CPU cores, RAM, LoadAvg — из корня объекта ноды; при отсутствии в списке делается детальный запрос `/api/nodes/{uuid}`.
 - **Трафик нод**: `trafficUsedBytes`, `trafficLimitBytes`, `trafficResetDay`, `isTrafficTrackingActive`.
-- **Inbound'ы / hosts**: бот собирает временный `sing-box` конфиг из `/api/hosts`, `/api/config-profiles/inbounds` и `node.configProfile.activeInbounds`, запускает SOCKS-прокси и делает HTTP probe через реальный inbound.
-- **Wrong IP**: если выходной IP не совпадает с ожидаемым IP или DNS-резолвом host address — отправляется отдельный алерт.
-- **Новые объекты**: новые ноды/хосты после discovery не включаются автоматически — админ включает их в Telegram.
+- **Inbound'ы / hosts**: бот собирает временный `sing-box` конфиг из `/api/hosts`, `/api/config-profiles/inbounds` и `node.configProfile.activeInbounds`, поднимает SOCKS-прокси и делает HTTP-probe через реальный inbound.
+- **Wrong IP**: если выходной IP не совпадает с ожидаемым IP или DNS-резолвом адреса хоста — отдельный алерт.
+- **Новые объекты**: после discovery новые ноды/хосты не включаются автоматически — админ включает их в Telegram (`/setup` или «🆕 Новые объекты»).
 
 ## Поддерживаемые проверки inbound'ов
 
 | Протокол | Network | Статус |
 |---|---:|---|
-| VLESS + Reality | TCP | поддерживается, `flow=xtls-rprx-vision`, без `transport: tcp` |
+| VLESS + Reality | TCP | поддерживается, `flow=xtls-rprx-vision` |
 | VLESS + Reality | gRPC | поддерживается, `flow=""`, `transport.type=grpc` |
 | Hysteria2 | hysteria | поддерживается, password = `monitor_user.vlessUuid` |
-| VLESS + Reality | XHTTP | не проверяется через sing-box, статус `SKIPPED_UNSUPPORTED` |
-
-## Важные исправления текущей версии
-
-- Метрики больше не показывают `0/1 MB`: поддержаны `memoryTotal/memoryUsed/loadAvg/cpus` как на верхнем уровне, так и внутри `system`.
-- Значения памяти считаются как bytes и отображаются в MiB.
-- В БД сохраняются `sni`, `fingerprint`, `allowInsecure`, `isDisabled`, `path`, `host`, `expected_ip` из `/api/hosts`.
-- SOCKS-проверки работают через `httpx[socks]`.
-- Ошибки `sing-box` больше не выбрасываются в `/dev/null`: stderr сохраняется и пишется в лог при падении.
-- `get_or_create_incident` сделан атомарным через `INSERT OR IGNORE`, поэтому ручная проверка и scheduler не ловят `UNIQUE constraint failed`.
-- DISABLED-ноды имеют нормальные тексты:
-  - `⚪ Нода X отключена в панели Remnawave`
-  - `✅ Нода X снова включена в панели Remnawave`
-- Telegram UI закрыт по `ADMIN_IDS`.
-- Добавлен периодический discovery и защита от наложения одинаковых проверок.
+| VLESS + Reality | XHTTP | не поддерживается sing-box: в UI помечен 🚫, в проверки не попадает |
+| TUIC / Hysteria (v1) | — | не поддерживается: в UI помечен 🚫 |
 
 ## Быстрый старт через Docker
 
 ### 1. Клонирование
 
 ```bash
-git clone https://github.com/Rrezzak09VPN/RemnaWatch.git
-cd RemnaWatch
+git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
+cd RemnaWatch-v2
 ```
 
-### 2. Конфиг
+### 2. Конфигурация
+
+Вариант А — вручную:
 
 ```bash
 cp .env.example .env
 nano .env
+```
+
+Вариант Б — интерактивный мастер:
+
+```bash
+python3 install.py
 ```
 
 Заполните:
@@ -68,7 +75,7 @@ LOG_PATH=./logs/bot.log
 TZ=Europe/Moscow
 ```
 
-`MONITOR_USER_UUID` — UUID активного пользователя Remnawave, через которого бот будет проверять inbound'ы. У пользователя должны быть доступны нужные squads/hosts, статус должен быть `ACTIVE`.
+`MONITOR_USER_UUID` — UUID активного пользователя Remnawave, через которого бот будет проверять inbound'ы. Пользователь должен иметь доступ к нужным squads/hosts и статус `ACTIVE`.
 
 ### 3. Запуск
 
@@ -86,9 +93,12 @@ docker compose logs -f remnawatch
 
 ```text
 Metrics Node-1: RAM 512/961 MiB (53.2%), CPU 1, Load 0.20 / 0.10 / 0.05
-Building sing-box config for Node-1: protocol=vless, network=tcp, security=reality, sni=..., fingerprint=firefox
+Inbound check started: 7 hosts, 5 config inbounds (sequential)
+Checking host 1/7: Node-1
 sing-box started for Node-1 on 127.0.0.1:20001 pid=...
 Inbound Node-1: HEALTHY (IP: ...)
+Checking host 2/7: Node-2
+...
 ```
 
 ## Установка без Docker
@@ -105,15 +115,34 @@ tar -xzf /tmp/sing-box.tar.gz -C /tmp
 sudo mv /tmp/sing-box-1.11.5-linux-amd64/sing-box /usr/local/bin/
 sudo chmod +x /usr/local/bin/sing-box
 
+git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
+cd RemnaWatch-v2
+
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
 cp .env.example .env
 nano .env
+
 python -m src.main
 ```
 
+## Обновление с RemnaWatch v1
+
+База данных совместима: при первом запуске v2 автоматически выполняются миграции (добавляется колонка `view_position` и др.). Достаточно:
+
+```bash
+git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
+cd RemnaWatch-v2
+cp /path/to/old/RemnaWatch/.env .env      # перенести конфиг
+cp -r /path/to/old/RemnaWatch/data ./data # перенести БД (опционально)
+docker compose up -d --build
+```
+
 ## Telegram интерфейс
+
+Кнопка **Menu** (слева от поля ввода): `/start` — главное меню, `/status` — общий статус, `/setup` — настройка мониторинга, `/help` — справка.
 
 Главное меню:
 
@@ -129,7 +158,7 @@ python -m src.main
 - `📜 История алертов`
 - `🔄 Проверить сейчас`
 
-После первого запуска нажмите `/setup` или `🆕 Новые объекты` и включите только те ноды/hosts, которые нужно мониторить.
+После первого запуска нажмите `/setup` или «🆕 Новые объекты» и включите только те ноды/hosts, которые нужно мониторить.
 
 ## Настройки в SQLite
 
@@ -141,8 +170,8 @@ python -m src.main
 | `metrics_interval_seconds` | 60 | проверка RAM/Load |
 | `traffic_interval_seconds` | 120 | проверка расхода трафика |
 | `inbounds_interval_seconds` | 300 | data-plane проверка inbound'ов |
-| `discovery_interval_seconds` | 600 | автообнаружение новых/удаленных объектов |
-| `singbox_parallel_count` | 2 | параллельные sing-box проверки |
+| `discovery_interval_seconds` | 600 | автообнаружение новых/удалённых объектов |
+| `singbox_parallel_count` | 2 | (v2: не используется — проверки строго последовательные) |
 | `fail_threshold` | 3 | сколько ошибок подряд до алерта |
 | `recovery_threshold` | 2 | сколько успехов подряд до recovery |
 | `alert_cooldown_seconds` | 3600 | повторный алерт активного инцидента |
@@ -150,56 +179,50 @@ python -m src.main
 
 Для `disabled` и `traffic_limit` алерт отправляется с первого обнаружения.
 
+> **Примечание:** начиная с v2 inbound'ы проверяются строго последовательно (один за другим, таймаут 60 с на хост). Настройка `singbox_parallel_count` и меню «🔢 Параллелизм» оставлены для совместимости, но на проверку inbound'ов не влияют.
+
 ## Диагностика
 
-### Метрики всё равно пустые
+### Метрики пустые
 
-Проверьте, отдает ли ваша панель метрики:
+Проверьте, отдаёт ли панель метрики:
 
 ```bash
 curl -s -H "Authorization: Bearer $REMNA_API_TOKEN" \
-  "$REMNA_API_URL/api/nodes/<NODE_UUID>" | python3 -m json.tool | grep -iE "cpu|memory|load|system"
+  "$REMNA_API_URL/api/nodes" | python3 -m json.tool | grep -iE "memoryTotal|memoryUsed|memoryFree|loadAvg|cpus"
 ```
 
-Бот ищет поля:
-
-- `memoryTotal`
-- `memoryUsed`
-- `memoryFree`
-- `loadAvg`
-- `cpus`
-
-на верхнем уровне объекта и внутри `system`.
+Бот ищет поля `memoryTotal`, `memoryUsed`, `memoryFree`, `loadAvg`, `cpus` **в корне объекта ноды**. Если `memoryUsed` отсутствует, он вычисляется из `memoryTotal − memoryFree`. Предупреждение `no metrics in API response` пишется один раз на ноду до восстановления метрик.
 
 ### Inbound не проверяется
 
-Смотрите лог:
-
 ```bash
-docker compose logs -f remnawatch | grep -E "Building sing-box|sing-box|Inbound"
+docker compose logs -f remnawatch | grep -E "Checking host|Building sing-box|Inbound"
 ```
 
-Статусы:
+Статусы (в БД/логах — английские, в Telegram UI — русские):
 
-- `HEALTHY` — трафик прошел.
-- `WARNING` — трафик прошел, но выходной IP не совпал.
-- `BROKEN` — трафик не прошел или sing-box упал.
-- `SKIPPED_UNSUPPORTED` — например XHTTP.
-- `DISABLED` — host выключен в Remnawave.
-- `CONFIG_ERROR` — бот не нашел raw inbound/config inbound.
+| Код | В UI | Значение |
+|---|---|---|
+| `HEALTHY` | Работает | трафик прошёл |
+| `WARNING` | Предупреждение | трафик прошёл, но выходной IP не совпал |
+| `BROKEN` | Не работает | трафик не прошёл, sing-box упал или таймаут 60 с |
+| `SKIPPED_UNSUPPORTED` | Пропущен (не поддерживается) | xhttp/tuic/hysteria |
+| `DISABLED` | Отключена | host выключен в Remnawave |
+| `CONFIG_ERROR` | Ошибка конфигурации | не найден raw/config inbound |
 
-### SOCKS ошибка в httpx
+### Логи слишком большие
 
-Убедитесь, что установлен пакет из requirements:
+В v2 логи ротируются автоматически: `bot.log` + `bot.log.1 ... bot.log.5`, максимум ~100 MB. Если нужно ещё меньше — уменьшите `maxBytes`/`backupCount` в `src/main.py` (`setup_logging`).
 
-```txt
-httpx[socks]==0.27.0
-```
+### Порядок нод не совпадает с панелью
+
+Порядок берётся из поля `viewPosition` API и обновляется при каждом discovery (раз в `discovery_interval_seconds`). После перестановки нод в панели подождите до 10 минут или нажмите «🔄 Проверить сейчас».
 
 ## Безопасность
 
-- Никогда не коммитьте `.env`.
-- Если Remnawave API token или GitHub PAT попал в чат, лог или git history — немедленно отзовите его и создайте новый.
+- Никогда не коммитьте `.env` (он в `.gitignore`).
+- Если Remnawave API token, Telegram bot token или GitHub PAT попал в чат/лог/git history — немедленно отзовите его и создайте новый.
 - `.env.example` содержит только placeholders.
 - Telegram-команды доступны только `ADMIN_IDS`.
 
@@ -209,15 +232,18 @@ httpx[socks]==0.27.0
 src/
   api/remnawave_api.py        # Remnawave API client
   checks/nodes_checker.py     # control-plane статус нод
-  checks/metrics_checker.py   # RAM/Load checker
+  checks/metrics_checker.py   # RAM/Load (метрики из корня объекта ноды)
   checks/traffic_checker.py   # traffic checker
-  checks/inbound_checker.py   # sing-box data-plane checker
+  checks/inbound_checker.py   # последовательный sing-box data-plane checker (60s timeout)
   checks/probe.py             # HTTP probes через SOCKS
   checks/singbox_runner.py    # lifecycle sing-box процесса
-  alert/engine.py             # anti-flap/cooldown/recovery
+  alert/engine.py             # anti-flap/cooldown/recovery, русские тексты алертов
   scheduler/manager.py        # APScheduler + locks
-  telegram/                  # aiogram UI
-  database.py                 # SQLite schema + migrations
+  telegram/bot.py             # aiogram init, кнопка Menu, /status /help
+  telegram/keyboards.py       # клавиатуры, переводы статусов, фильтр xhttp
+  telegram/handlers/          # aiogram UI handlers
+  database.py                 # SQLite schema + миграции (view_position и др.)
+  main.py                     # запуск, ротация логов
 ```
 
 ## Лицензия
