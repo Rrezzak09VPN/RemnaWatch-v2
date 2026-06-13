@@ -38,9 +38,11 @@ class AlertEngine:
         details: str = "",
     ):
         incident = await get_or_create_incident(obj_type, obj_uuid, incident_type)
-        fail_threshold = self._fail_threshold(incident_type, int(await get_setting("fail_threshold") or 3))
+        # Для inbound-incident'ов берём специфичный порог, если задан
+        fail_threshold_setting = "inbound_fail_threshold" if obj_type == "inbound" else "fail_threshold"
+        fail_threshold = self._fail_threshold(incident_type, int(await get_setting(fail_threshold_setting) or 3))
         recovery_threshold = self._recovery_threshold(incident_type, int(await get_setting("recovery_threshold") or 2))
-        cooldown = int(await get_setting("alert_cooldown_seconds") or 3600)
+        cooldown = int(await get_setting("alert_cooldown_seconds") or 1800)
 
         fails = int(incident["consecutive_fails"] or 0)
         successes = int(incident["consecutive_successes"] or 0)
@@ -84,6 +86,8 @@ class AlertEngine:
     def _fail_threshold(incident_type: str, default: int) -> int:
         if incident_type in {"disabled", "traffic_limit"}:
             return 1
+        if incident_type == "broken":
+            return max(1, min(default, 2))  # Для inbound'ов: не более 2 провалов
         return max(1, default)
 
     @staticmethod

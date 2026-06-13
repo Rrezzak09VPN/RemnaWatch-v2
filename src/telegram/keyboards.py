@@ -40,7 +40,8 @@ def nodes_kb(nodes: list[dict]) -> InlineKeyboardMarkup:
 
 
 # Протоколы/транспорты, которые sing-box не поддерживает — мониторинг для них недоступен.
-UNSUPPORTED_PROTOCOLS = {"xhttp", "tuic", "hysteria"}
+# hysteria2 поддерживается — в UNSUPPORTED_PROTOCOLS его НЕТ.
+UNSUPPORTED_PROTOCOLS = {"xhttp", "tuic"}
 
 # Переводы машинных статусов (в БД и логах остаются английские — для совместимости).
 STATUS_TRANSLATIONS = {

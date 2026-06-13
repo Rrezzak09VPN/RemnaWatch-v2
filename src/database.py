@@ -120,12 +120,13 @@ DEFAULT_SETTINGS = {
     "nodes_interval_seconds": "60",
     "metrics_interval_seconds": "60",
     "traffic_interval_seconds": "120",
-    "inbounds_interval_seconds": "300",
-    "discovery_interval_seconds": "600",
+    "inbounds_interval_seconds": "120",
+    "discovery_interval_seconds": "300",
     "singbox_parallel_count": "2",
     "fail_threshold": "3",
+    "inbound_fail_threshold": "2",
     "recovery_threshold": "2",
-    "alert_cooldown_seconds": "3600",
+    "alert_cooldown_seconds": "1800",
     "traffic_warn_percent": "90",
 }
 

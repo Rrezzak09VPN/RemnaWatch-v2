@@ -37,9 +37,18 @@ def _normalize_load(value: Any) -> list[float]:
 def _has_metrics(node: dict | None) -> bool:
     if not node:
         return False
-    # Метрики лежат в корне объекта ноды (memoryTotal, memoryUsed, memoryFree,
-    # loadAvg, cpus), а не во вложенном system. Ищем в корне.
-    return node.get("memoryTotal") is not None
+    # Метрики могут лежать в корне объекта ноды (memoryTotal, memoryUsed...)
+    # или во вложенном system.info / system.stats (зависит от версии Remnawave API).
+    if node.get("memoryTotal") is not None:
+        return True
+    # Проверяем вложенную структуру response.system
+    system = node.get("system")
+    if isinstance(system, dict):
+        info = system.get("info") or {}
+        stats = system.get("stats") or {}
+        if info.get("memoryTotal") is not None or stats.get("memoryUsed") is not None or stats.get("memoryFree") is not None:
+            return True
+    return False
 
 
 async def fetch_node_metrics(api: RemnawaveAPI, node_uuid: str, base_node: dict | None = None) -> dict | None:
@@ -61,22 +70,29 @@ async def fetch_node_metrics(api: RemnawaveAPI, node_uuid: str, base_node: dict 
         return None
     _warned_no_metrics.discard(node_uuid)
 
+    # Извлекаем метрики из разных структур API (корень или system.info/system.stats)
+    system = node.get("system") if isinstance(node.get("system"), dict) else {}
+    info = system.get("info") if isinstance(system.get("info"), dict) else {}
+    stats = system.get("stats") if isinstance(system.get("stats"), dict) else {}
+
     try:
-        # Читаем напрямую из корня
-        mem_total = int(node.get("memoryTotal", 0) or 0)
-        mem_used = int(node.get("memoryUsed", 0) or 0)
+        mem_total = int(info.get("memoryTotal") or node.get("memoryTotal") or 0)
+        mem_used = int(stats.get("memoryUsed") or node.get("memoryUsed") or 0)
+        mem_free = int(stats.get("memoryFree") or node.get("memoryFree") or 0)
+        cpus = int(info.get("cpus") or node.get("cpus") or 1)
+        load_raw = stats.get("loadAvg") or node.get("loadAvg") or [0, 0, 0]
 
-        # Если memoryUsed отсутствует, вычисляем из memoryFree
-        if mem_used == 0:
-            mem_free = int(node.get("memoryFree", 0) or 0)
-            mem_used = max(mem_total - mem_free, 0)
-        else:
-            mem_free = int(node.get("memoryFree", max(mem_total - mem_used, 0)) or 0)
+        if not isinstance(load_raw, list):
+            load_raw = [load_raw]
 
-        cpus = int(node.get("cpus", 1) or 1)
+        load_avg = _normalize_load(load_raw)
     except (TypeError, ValueError):
         logger.warning("Node %s: invalid metrics types", name)
         return None
+
+    # Если memoryUsed отсутствует, вычисляем из memoryFree
+    if mem_used == 0:
+        mem_used = max(mem_total - mem_free, 0)
 
     if mem_total <= 0:
         logger.warning("Node %s: memoryTotal=0 in API response", name)
@@ -89,7 +105,7 @@ async def fetch_node_metrics(api: RemnawaveAPI, node_uuid: str, base_node: dict 
         "memoryTotal": mem_total,
         "memoryUsed": mem_used,
         "memoryFree": mem_free,
-        "loadAvg": _normalize_load(node.get("loadAvg") or [0, 0, 0]),
+        "loadAvg": load_avg,
         "isConnected": bool(node.get("isConnected")),
         "isDisabled": bool(node.get("isDisabled")),
     }
