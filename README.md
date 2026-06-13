@@ -1,317 +1,187 @@
 # RemnaWatch v2
 
-Telegram-бот для мониторинга [Remnawave](https://remna.st): статусы нод, системные метрики (RAM/CPU), трафик и реальная data-plane проверка inbound'ов через `sing-box`.
+> рџ¦ѕ Telegram-Р±РѕС‚ РґР»СЏ РјРѕРЅРёС‚РѕСЂРёРЅРіР° [Remnawave](https://remna.st): СЃС‚Р°С‚СѓСЃС‹ РЅРѕРґ, РјРµС‚СЂРёРєРё (RAM/CPU), С‚СЂР°С„РёРє Рё data-plane РїСЂРѕРІРµСЂРєР° inbound'РѕРІ С‡РµСЂРµР· `sing-box`.
 
-Это вторая версия проекта ([первая — RemnaWatch](https://github.com/Rrezzak09VPN/RemnaWatch)). Бот не парсит subscription URL — все параметры берутся напрямую из Remnawave API.
+Р‘РѕС‚ РЅРµ РїР°СЂСЃРёС‚ subscription URL вЂ” РІСЃРµ РґР°РЅРЅС‹Рµ Р±РµСЂСѓС‚СЃСЏ РЅР°РїСЂСЏРјСѓСЋ РёР· Remnawave API.
 
-## Что нового в v2
+---
 
-- **Hysteria2 поддерживается** — протокол `hysteria2` добавлен в список поддерживаемых. Бот строит sing-box конфиг с `alpn: ["h3"]`, password = `monitor_user.vlessUuid`. В UI больше не помечается как 🚫.
-- **Метрики починены** — `memoryTotal / memoryUsed / memoryFree / loadAvg / cpus` читаются **как из корня объекта ноды, так и из вложенной структуры `response.system.info` / `response.system.stats`** (зависит от версии Remnawave API). Если `memoryUsed` отсутствует, вычисляется как `memoryTotal − memoryFree`. Предупреждение «no metrics» пишется один раз на ноду, а не каждые 60 секунд.
-- **Быстрые алерты** — для inbound'ов `fail_threshold` снижен до 2, `inbounds_interval_seconds` по умолчанию 120 с, `alert_cooldown_seconds` 1800 с. Оповещение об отвалившемся inbound'е приходит через ~2–4 минуты вместо 8–15.
-- **Строгая очередь проверок inbound'ов** — хосты проверяются последовательно, в порядке панели, с прогрессом в логах (`Checking host 3/7: ...`) и жёстким таймаутом **60 секунд на хост**. Один «мёртвый» хост больше не блокирует очередь на 9+ минут.
-- **Discovery быстрее** — `discovery_interval_seconds` по умолчанию 300 с (было 600). Новые ноды и хосты обнаруживаются быстрее, удалённые — архивируются.
-- **Порядок как в панели** — ноды и хосты сортируются по `viewPosition` из Remnawave API (в списках Telegram и в очереди проверок). Порядок переживает перезапуск.
-- **Ротация логов** — `RotatingFileHandler`: 20 MB на файл, 5 бэкапов (максимум ~100 MB на диске). Диагностический спам API-ответов переведён на уровень DEBUG.
-- **Корректные алерты** — отключённая нода теперь `🔴` (был белый кружок), тексты восстановления описывают нормальное состояние (`✅ Inbound X снова пропускает трафик` вместо противоречивого «восстановлено — не пропускает трафик»).
-- **Русифицированный интерфейс** — статусы в Telegram на русском (`Активна / Недоступна / Работает / Не работает / Пропущен...`). В БД и логах остаются английские коды для совместимости.
-- **Кнопка Menu** — слева от поля ввода: `/start`, `/status`, `/setup`, `/help`.
-- **Навигация** — кнопки «◀️ Назад» во всех подменю и «❌ Отмена» при вводе порогов (с корректным FSM-состоянием).
+## рџ†• Р§С‚Рѕ РЅРѕРІРѕРіРѕ РІ v2
 
-## Что мониторится
+- вњ… **Hysteria2** вЂ” С‚РµРїРµСЂСЊ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ, `alpn: ["h3"]`, РїР°СЂРѕР»СЊ = `monitor_user.vlessUuid`
+- рџ”§ **РњРµС‚СЂРёРєРё РїРѕС‡РёРЅРµРЅС‹** вЂ” С‡РёС‚Р°СЋС‚СЃСЏ РёР· РєРѕСЂРЅСЏ РЅРѕРґС‹ РёР»Рё `response.system.info/stats`, `memoryUsed` РІС‹С‡РёСЃР»СЏРµС‚СЃСЏ РµСЃР»Рё РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚
+- вљЎ **Р‘С‹СЃС‚СЂС‹Рµ Р°Р»РµСЂС‚С‹** вЂ” inbound Р°Р»РµСЂС‚ Р·Р° ~2вЂ“4 РјРёРЅ (Р±С‹Р»Рѕ 8вЂ“15), `fail_threshold=2`, РєРґ 30 РјРёРЅ
+- рџ“‹ **РЎС‚СЂРѕРіР°СЏ РѕС‡РµСЂРµРґСЊ** вЂ” С…РѕСЃС‚С‹ РїСЂРѕРІРµСЂСЏСЋС‚СЃСЏ РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕ, С‚Р°Р№РјР°СѓС‚ 60 СЃ РЅР° С…РѕСЃС‚
+- рџљЂ **Discovery Р±С‹СЃС‚СЂРµРµ** вЂ” РєР°Р¶РґС‹Рµ 300 СЃ (Р±С‹Р»Рѕ 600)
+- рџ”ў **РџРѕСЂСЏРґРѕРє РєР°Рє РІ РїР°РЅРµР»Рё** вЂ” СЃРѕСЂС‚РёСЂРѕРІРєР° РїРѕ `viewPosition`
+- рџ“¦ **Р РѕС‚Р°С†РёСЏ Р»РѕРіРѕРІ** вЂ” 20 MB РЅР° С„Р°Р№Р», 5 Р±СЌРєР°РїРѕРІ (~100 MB РјР°РєСЃ)
+- рџ‡·рџ‡є **Р СѓСЃСЃРєРёР№ РёРЅС‚РµСЂС„РµР№СЃ** вЂ” СЃС‚Р°С‚СѓСЃС‹ РІ Telegram РЅР° СЂСѓСЃСЃРєРѕРј, РІ Р‘Р”/Р»РѕРіР°С… Р°РЅРіР»РёР№СЃРєРёРµ
+- рџ§­ **РќР°РІРёРіР°С†РёСЏ** вЂ” РєРЅРѕРїРєР° Menu, В«в—ЂпёЏ РќР°Р·Р°РґВ» Рё В«вќЊ РћС‚РјРµРЅР°В» РІРѕ РІСЃРµС… РјРµРЅСЋ
 
-- **Ноды**: статусы по `/api/nodes` (в UI: Активна / Недоступна / Отключена / Неизвестно).
-- **Метрики железа**: CPU cores, RAM, LoadAvg — из корня объекта ноды **или** `response.system.info` / `response.system.stats`; при отсутствии в списке делается детальный запрос `/api/nodes/{uuid}`.
-- **Трафик нод**: `trafficUsedBytes`, `trafficLimitBytes`, `trafficResetDay`, `isTrafficTrackingActive`.
-- **Inbound'ы / hosts**: бот собирает временный `sing-box` конфиг из `/api/hosts`, `/api/config-profiles/inbounds` и `node.configProfile.activeInbounds`, поднимает SOCKS-прокси и делает HTTP-probe через реальный inbound.
-- **Wrong IP**: если выходной IP не совпадает с ожидаемым IP или DNS-резолвом адреса хоста — отдельный алерт.
-- **Новые объекты**: после discovery новые ноды/хосты не включаются автоматически — админ включает их в Telegram (`/setup` или «🆕 Новые объекты»).
-- **Удалённые объекты**: если нода или хост исчезли из API, discovery архивирует их (`archived=1`), после чего они исключаются из всех проверок и не спамят ошибками.
+---
 
-## Поддерживаемые проверки inbound'ов
+## рџ“Ў Р§С‚Рѕ РјРѕРЅРёС‚РѕСЂРёС‚СЃСЏ
 
-| Протокол | Network | Статус |
+- рџ–ҐпёЏ **РќРѕРґС‹**: СЃС‚Р°С‚СѓСЃС‹ (РђРєС‚РёРІРЅР° / РќРµРґРѕСЃС‚СѓРїРЅР° / РћС‚РєР»СЋС‡РµРЅР°)
+- рџ§  **РњРµС‚СЂРёРєРё**: CPU, RAM, LoadAvg
+- рџљ¦ **РўСЂР°С„РёРє**: used/limit, РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ РїСЂРё 90%
+- рџЊђ **Inbound'С‹**: СЂРµР°Р»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° С‡РµСЂРµР· sing-box + SOCKS5 probe
+- рџ›ЎпёЏ **Wrong IP**: Р°Р»РµСЂС‚ РµСЃР»Рё IP РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ РѕР¶РёРґР°РµРјС‹Рј
+- рџ†• **РќРѕРІС‹Рµ/СѓРґР°Р»С‘РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹** вЂ” Р°РІС‚РѕРѕР±РЅР°СЂСѓР¶РµРЅРёРµ, Р°РґРјРёРЅ РІРєР»СЋС‡Р°РµС‚ РІСЂСѓС‡РЅСѓСЋ
+
+## вњ… РџРѕРґРґРµСЂР¶РёРІР°РµРјС‹Рµ inbound'С‹
+
+| РџСЂРѕС‚РѕРєРѕР» | Network | РЎС‚Р°С‚СѓСЃ |
 |---|---|---|
-| VLESS + Reality | TCP | ✅ поддерживается, `flow=xtls-rprx-vision` |
-| VLESS + Reality | gRPC | ✅ поддерживается, `flow=""`, `transport.type=grpc` |
-| Hysteria2 | hysteria2 | ✅ поддерживается, password = `monitor_user.vlessUuid`, `alpn: ["h3"]` |
-| VLESS + Reality | XHTTP | ❌ не поддерживается sing-box: в UI помечен 🚫 |
-| TUIC | — | ❌ не поддерживается: в UI помечен 🚫 |
+| VLESS + Reality | TCP | вњ… `flow=xtls-rprx-vision` |
+| VLESS + Reality | gRPC | вњ… `flow=""`, `transport.type=grpc` |
+| Hysteria2 | hysteria2 | вњ… РїР°СЂРѕР»СЊ = `vlessUuid`, `alpn: ["h3"]` |
+| VLESS + Reality | XHTTP | вќЊ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ |
+| TUIC | вЂ” | вќЊ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ |
 
-## Быстрый старт через Docker
+---
 
-### 1. Клонирование
+## рџђі Р‘С‹СЃС‚СЂС‹Р№ СЃС‚Р°СЂС‚ (Docker)
 
 ```bash
 git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
 cd RemnaWatch-v2
-```
-
-### 2. Конфигурация
-
-Вариант А — вручную:
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Вариант Б — интерактивный мастер:
-
-```bash
-python3 install.py
-```
-
-Заполните:
-
-```env
-BOT_TOKEN=123456:ABC-your_bot_token_here
-ADMIN_IDS=123456789
-
-REMNA_API_URL=https://panel.example.com
-REMNA_API_TOKEN=your_remnawave_api_jwt_token
-MONITOR_USER_UUID=00000000-0000-0000-0000-000000000000
-
-SINGBOX_BIN=/usr/local/bin/sing-box
-DB_PATH=./data/bot.db
-LOG_PATH=./logs/bot.log
-TZ=Europe/Moscow
-```
-
-`MONITOR_USER_UUID` — UUID активного пользователя Remnawave, через которого бот будет проверять inbound'ы. Пользователь должен иметь доступ к нужным squads/hosts и статус `ACTIVE`.
-
-### 3. Запуск
-
-```bash
+cp .env.example .env       # РёР»Рё python3 install.py
+# Р—Р°РїРѕР»РЅРёС‚Рµ .env СЃРІРѕРёРјРё РґР°РЅРЅС‹РјРё
 docker compose up -d --build
 ```
 
-### 4. Логи
-
-```bash
-docker compose logs -f remnawatch
-```
-
-Ожидаемые строки после включения объектов:
-
-```text
-Metrics Node-1: RAM 512/961 MiB (53.2%), CPU 1, Load 0.20 / 0.10 / 0.05
-Inbound check started: 7 hosts, 5 config inbounds (sequential)
-Checking host 1/7: Node-1
-sing-box started for Node-1 on 127.0.0.1:20001 pid=...
-Inbound Node-1: HEALTHY (IP: ...)
-Checking host 2/7: Node-2
-...
-```
-
-## Установка без Docker
+## рџ–ҐпёЏ РЈСЃС‚Р°РЅРѕРІРєР° Р±РµР· Docker
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip wget ca-certificates
-
-# Установка sing-box
-wget -qO /tmp/sing-box.tar.gz \
-  https://github.com/SagerNet/sing-box/releases/download/v1.11.5/sing-box-1.11.5-linux-amd64.tar.gz
-
-echo "be0c0f8d7d7feaa09821d52ab1c07c2a202a234c8c6002c1538c7d048de82f3d  /tmp/sing-box.tar.gz" | sha255sum -c -
+# РЈСЃС‚Р°РЅРѕРІРєР° sing-box v1.11.5
+wget -qO /tmp/sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.11.5/sing-box-1.11.5-linux-amd64.tar.gz
+# РџСЂРѕРІРµСЂРєР° РєРѕРЅС‚СЂРѕР»СЊРЅРѕР№ СЃСѓРјРјС‹
+echo "be0c0f8d7d7feaa09821d52ab1c07c2a202a234c8c6002c1538c7d048de82f3d /tmp/sing-box.tar.gz" | sha256sum -c -
 tar -xzf /tmp/sing-box.tar.gz -C /tmp
 sudo mv /tmp/sing-box-1.11.5-linux-amd64/sing-box /usr/local/bin/
-sudo chmod +x /usr/local/bin/sing-box
-
-# Клонирование и настройка
 git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
 cd RemnaWatch-v2
-
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env
-nano .env
-
+python3 install.py
 python -m src.main
 ```
 
-## Полное удаление бота
+---
 
-Чтобы полностью вычистить бота, его зависимости, БД, логи и sing-box:
+## рџ—‘пёЏ РџРѕР»РЅРѕРµ СѓРґР°Р»РµРЅРёРµ
 
-### Docker-установка
-
+**Docker:**
 ```bash
-cd RemnaWatch-v2
-
-# Остановить и удалить контейнеры
-docker compose down
-
-# Удалить образы
-docker rmi remnawatch-v2 2>/dev/null || true
-
-# Удалить папку проекта (БД, логи, конфиги)
-cd ..
-rm -rf RemnaWatch-v2
-
-# (Опционально) Удалить Docker если он больше не нужен
-# docker system prune -af
+docker compose down && docker rmi remnawatch-v2 2>/dev/null
+cd .. && rm -rf RemnaWatch-v2
 ```
 
-### Установка без Docker
-
+**Р‘РµР· Docker:**
 ```bash
-# Остановить процесс бота (если запущен в background)
-pkill -f "python.*src.main" 2>/dev/null || true
-pkill -f "sing-box" 2>/dev/null || true
-
-# Удалить папку проекта (БД, логи, конфиги)
-rm -rf RemnaWatch-v2
-
-# Удалить virtualenv
-rm -rf venv
-
-# Удалить sing-box (если устанавливался отдельно)
+pkill -f "python.*src.main" 2>/dev/null
+pkill -f "sing-box" 2>/dev/null
+rm -rf RemnaWatch-v2 venv
 sudo rm -f /usr/local/bin/sing-box
-
-# (Опционально) Удалить глобальные зависимости
-# sudo apt remove -y python3 python3-venv python3-pip wget ca-certificates
 ```
 
-> **Важно:** Удаление папки проекта автоматически удалит:
-> - `data/bot.db` — базу данных SQLite (все настройки, статусы, история алертов)
-> - `logs/bot.log*` — все логи бота
-> - `.env` — конфигурационный файл с токенами
+---
 
-## Обновление с RemnaWatch v1
+## рџ¤– Telegram РёРЅС‚РµСЂС„РµР№СЃ
 
-База данных совместима: при первом запуске v2 автоматически выполняются миграции (добавляется колонка `view_position` и др.). Достаточно:
+РљРЅРѕРїРєР° **Menu**: `/start`, `/status`, `/setup`, `/help`
 
-```bash
-git clone https://github.com/Rrezzak09VPN/RemnaWatch-v2.git
-cd RemnaWatch-v2
-cp /path/to/old/RemnaWatch/.env .env      # перенести конфиг
-cp -r /path/to/old/RemnaWatch/data ./data # перенести БД (опционально)
-docker compose up -d --build
-```
+Р“Р»Р°РІРЅРѕРµ РјРµРЅСЋ:
+рџ“Љ РЎС‚Р°С‚СѓСЃ | рџ–ҐпёЏ РќРѕРґС‹ | рџЊђ Inbound'С‹ | рџ“€ РњРµС‚СЂРёРєРё | рџљ¦ РўСЂР°С„РёРє | вЏ±пёЏ РРЅС‚РµСЂРІР°Р»С‹ | вљ™пёЏ РџРѕСЂРѕРіРё | рџ”ў РџР°СЂР°Р»Р»РµР»РёР·Рј | рџ†• РќРѕРІС‹Рµ РѕР±СЉРµРєС‚С‹ | рџ“њ РСЃС‚РѕСЂРёСЏ Р°Р»РµСЂС‚РѕРІ | рџ”„ РџСЂРѕРІРµСЂРёС‚СЊ СЃРµР№С‡Р°СЃ
 
-## Telegram интерфейс
+---
 
-Кнопка **Menu** (слева от поля ввода): `/start` — главное меню, `/status` — общий статус, `/setup` — настройка мониторинга, `/help` — справка.
+## вљ™пёЏ РќР°СЃС‚СЂРѕР№РєРё (SQLite)
 
-Главное меню:
-
-- `📊 Общий статус`
-- `🖥️ Ноды`
-- `🌐 Inbound'ы`
-- `📈 Метрики нод`
-- `🚦 Трафик нод`
-- `⏱️ Интервалы`
-- `⚙️ Пороги`
-- `🔢 Параллелизм`
-- `🆕 Новые объекты`
-- `📜 История алертов`
-- `🔄 Проверить сейчас`
-
-После первого запуска нажмите `/setup` или «🆕 Новые объекты» и включите только те ноды/hosts, которые нужно мониторить.
-
-## Настройки в SQLite
-
-Настраиваются из Telegram UI или через таблицу `settings`:
-
-| Key | Default | Назначение |
+| РљР»СЋС‡ | РџРѕ СѓРјРѕР»С‡. | РћРїРёСЃР°РЅРёРµ |
 |---|---|---|
-| `nodes_interval_seconds` | 60 | проверка статуса нод |
-| `metrics_interval_seconds` | 60 | проверка RAM/Load |
-| `traffic_interval_seconds` | 120 | проверка расхода трафика |
-| `inbounds_interval_seconds` | 120 | data-plane проверка inbound'ов |
-| `discovery_interval_seconds` | 300 | автообнаружение новых/удалённых объектов |
-| `singbox_parallel_count` | 2 | (v2: не используется — проверки строго последовательные) |
-| `fail_threshold` | 3 | сколько ошибок подряд до алерта (ноды, метрики, трафик) |
-| `inbound_fail_threshold` | 2 | сколько ошибок подряд до алерта для inbound'ов |
-| `recovery_threshold` | 2 | сколько успехов подряд до recovery |
-| `alert_cooldown_seconds` | 1800 | повторный алерт активного инцидента |
-| `traffic_warn_percent` | 90 | предупреждение по лимиту трафика |
+| `nodes_interval_seconds` | 60 | РїСЂРѕРІРµСЂРєР° РЅРѕРґ |
+| `metrics_interval_seconds` | 60 | РїСЂРѕРІРµСЂРєР° РјРµС‚СЂРёРє |
+| `traffic_interval_seconds` | 120 | РїСЂРѕРІРµСЂРєР° С‚СЂР°С„РёРєР° |
+| `inbounds_interval_seconds` | 120 | РїСЂРѕРІРµСЂРєР° inbound'РѕРІ |
+| `discovery_interval_seconds` | 300 | Р°РІС‚РѕРѕР±РЅР°СЂСѓР¶РµРЅРёРµ |
+| `fail_threshold` | 3 | РѕС€РёР±РѕРє РґРѕ Р°Р»РµСЂС‚Р° (РЅРѕРґС‹/РјРµС‚СЂРёРєРё/С‚СЂР°С„РёРє) |
+| `inbound_fail_threshold` | 2 | РѕС€РёР±РѕРє РґРѕ Р°Р»РµСЂС‚Р° (inbound'С‹) |
+| `recovery_threshold` | 2 | СѓСЃРїРµС…РѕРІ РґРѕ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёСЏ |
+| `alert_cooldown_seconds` | 1800 | РїРѕРІС‚РѕСЂРЅС‹Р№ Р°Р»РµСЂС‚ (СЃРµРє) |
+| `traffic_warn_percent` | 90 | РїРѕСЂРѕРі РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ РїРѕ С‚СЂР°С„РёРєСѓ |
 
-Для `disabled` и `traffic_limit` алерт отправляется с первого обнаружения.
+> рџ”ў `singbox_parallel_count` РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ вЂ” РїСЂРѕРІРµСЂРєРё СЃС‚СЂРѕРіРѕ РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅС‹Рµ.
 
-> **Примечание:** начиная с v2 inbound'ы проверяются строго последовательно (один за другим, таймаут 60 с на хост). Настройка `singbox_parallel_count` и меню «🔢 Параллелизм» оставлены для совместимости, но на проверку inbound'ов не влияют.
+---
 
-## Диагностика
+## рџ”Ќ Р”РёР°РіРЅРѕСЃС‚РёРєР°
 
-### Метрики пустые
-
-Проверьте, отдаёт ли панель метрики:
-
+**РњРµС‚СЂРёРєРё РїСѓСЃС‚С‹Рµ:**
 ```bash
-curl -s -H "Authorization: Bearer $REMNA_API_TOKEN" \
-  "$REMNA_API_URL/api/nodes" | python3 -m json.tool | grep -iE "memoryTotal|memoryUsed|memoryFree|loadAvg|cpus"
+curl -s -H "Authorization: Bearer $REMNA_API_TOKEN" "$REMNA_API_URL/api/nodes" | python3 -m json.tool | grep -iE "memoryTotal|memoryUsed|memoryFree|loadAvg|cpus"
 ```
 
-Бот ищет поля `memoryTotal`, `memoryUsed`, `memoryFree`, `loadAvg`, `cpus` **как в корне объекта ноды, так и во вложенной структуре `response.system.info` / `response.system.stats`**. Если `memoryUsed` отсутствует, он вычисляется из `memoryTotal − memoryFree`. Предупреждение `no metrics in API response` пишется один раз на ноду до восстановления метрик.
-
-### Inbound не проверяется
-
+**Inbound РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ:**
 ```bash
 docker compose logs -f remnawatch | grep -E "Checking host|Building sing-box|Inbound"
 ```
 
-Статусы (в БД/логах — английские, в Telegram UI — русские):
+**РЎС‚Р°С‚СѓСЃС‹ inbound'РѕРІ:**
 
-| Код | В UI | Значение |
+| РљРѕРґ | Р’ UI | Р§С‚Рѕ Р·РЅР°С‡РёС‚ |
 |---|---|---|
-| `HEALTHY` | Работает | трафик прошёл |
-| `WARNING` | Предупреждение | трафик прошёл, но выходной IP не совпал |
-| `BROKEN` | Не работает | трафик не прошёл, sing-box упал или таймаут 60 с |
-| `SKIPPED_UNSUPPORTED` | Пропущен (не поддерживается) | xhttp/tuic |
-| `DISABLED` | Отключена | host выключен в Remnawave |
-| `CONFIG_ERROR` | Ошибка конфигурации | не найден raw/config inbound |
+| `HEALTHY` | вњ… Р Р°Р±РѕС‚Р°РµС‚ | С‚СЂР°С„РёРє РїСЂРѕС€С‘Р» |
+| `WARNING` | вљ пёЏ РџСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ | IP РЅРµ СЃРѕРІРїР°Р» |
+| `BROKEN` | рџ”ґ РќРµ СЂР°Р±РѕС‚Р°РµС‚ | С‚Р°Р№РјР°СѓС‚ / РѕС€РёР±РєР° |
+| `SKIPPED_UNSUPPORTED` | вЏ­пёЏ РџСЂРѕРїСѓС‰РµРЅ | xhttp/tuic |
+| `DISABLED` | вљЄ РћС‚РєР»СЋС‡РµРЅР° | РІС‹РєР»СЋС‡РµРЅ РІ РїР°РЅРµР»Рё |
+| `CONFIG_ERROR` | вќЊ РћС€РёР±РєР° РєРѕРЅС„РёРіР° | inbound РЅРµ РЅР°Р№РґРµРЅ |
 
-### Логи слишком большие
+**Hysteria2 РЅРµ СЂР°Р±РѕС‚Р°РµС‚?** РџСЂРѕРІРµСЂСЊС‚Рµ РІРµСЂСЃРёСЋ sing-box в‰Ґ 1.8.0, `alpn: ["h3"]` Рё РїР°СЂРѕР»СЊ = `vlessUuid` РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
 
-В v2 логи ротируются автоматически: `bot.log` + `bot.log.1 ... bot.log.5`, максимум ~100 MB. Если нужно ещё меньше — уменьшите `maxBytes`/`backupCount` в `src/main.py` (`setup_logging`).
+**РЈРґР°Р»С‘РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹** Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р°СЂС…РёРІРёСЂСѓСЋС‚СЃСЏ РїСЂРё discovery Рё РёСЃРєР»СЋС‡Р°СЋС‚СЃСЏ РёР· РїСЂРѕРІРµСЂРѕРє.
 
-### Порядок нод не совпадает с панелью
+---
 
-Порядок берётся из поля `viewPosition` API и обновляется при каждом discovery (раз в `discovery_interval_seconds`). После перестановки нод в панели подождите до 5 минут или нажмите «🔄 Проверить сейчас».
+## рџ“Ѓ РЎС‚СЂСѓРєС‚СѓСЂР° РїСЂРѕРµРєС‚Р°
 
-### Hysteria2 не работает
-
-Убедитесь что:
-- Протокол inbound'а определяется как `hysteria2` (или network = `hysteria2`)
--sing-box установлен версии >= 1.8.0 (поддержка hysteria2)
-- В конфиге sing-box указан `alpn: ["h3"]` — это требование серверной части Xray
-- Пароль для Hysteria2 = `vlessUuid` пользователя мониторинга
-
-### Удалённые объекты
-
-Если нода или хост удалены в панели Remnawave, они автоматически архивируются при следующем discovery (раз в 300 с по умолчанию). Архивированные объекты (`archived=1`) исключаются из всех проверок и не спамят ошибками в логи.
-
-## Безопасность
-
-- Никогда не коммитьте `.env` (он в `.gitignore`).
-- Если Remnawave API token, Telegram bot token или GitHub PAT попал в чат/лог/git history — немедленно отзовите его и создайте новый.
-- `.env.example` содержит только placeholders.
-- Telegram-команды доступны только `ADMIN_IDS`.
-
-## Структура
-
-```text
+```
 src/
-  api/remnawave_api.py        # Remnawave API client
-  checks/nodes_checker.py     # control-plane статус нод
-  checks/metrics_checker.py   # RAM/Load (метрики из корня или system.info/system.stats)
-  checks/traffic_checker.py   # traffic checker
-  checks/inbound_checker.py   # последовательный sing-box data-plane checker (60s timeout)
-  checks/probe.py             # HTTP probes через SOCKS
-  checks/singbox_runner.py    # lifecycle sing-box процесса
-  alert/engine.py             # anti-flap/cooldown/recovery, русские тексты алертов
-  scheduler/manager.py        # APScheduler + locks
-  telegram/bot.py             # aiogram init, кнопка Menu, /status /help
-  telegram/keyboards.py       # клавиатуры, переводы статусов, фильтр xhttp/tuic
-  telegram/handlers/          # aiogram UI handlers
-  database.py                 # SQLite schema + миграции (view_position и др.)
-  main.py                     # запуск, ротация логов
+в”њв”Ђв”Ђ api/remnawave_api.py       # РєР»РёРµРЅС‚ Remnawave API
+в”њв”Ђв”Ђ checks/
+в”‚   в”њв”Ђв”Ђ nodes_checker.py       # СЃС‚Р°С‚СѓСЃ РЅРѕРґ
+в”‚   в”њв”Ђв”Ђ metrics_checker.py     # RAM/CPU/Load
+в”‚   в”њв”Ђв”Ђ traffic_checker.py     # С‚СЂР°С„РёРє
+в”‚   в”њв”Ђв”Ђ inbound_checker.py     # data-plane РїСЂРѕРІРµСЂРєР°
+в”‚   в”њв”Ђв”Ђ probe.py               # HTTP probe С‡РµСЂРµР· SOCKS5
+в”‚   в””в”Ђв”Ђ singbox_runner.py      # Р·Р°РїСѓСЃРє sing-box
+в”њв”Ђв”Ђ alert/engine.py            # Р°РЅС‚РёС„Р»Р°Рґ, РєРґ, РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ
+в”њв”Ђв”Ђ scheduler/manager.py       # APScheduler
+в”њв”Ђв”Ђ telegram/
+в”‚   в”њв”Ђв”Ђ bot.py                 # aiogram, РєРЅРѕРїРєР° Menu
+в”‚   в”њв”Ђв”Ђ keyboards.py           # РєР»Р°РІРёР°С‚СѓСЂС‹, СЃС‚Р°С‚СѓСЃС‹
+в”‚   в”њв”Ђв”Ђ handlers/              # РѕР±СЂР°Р±РѕС‚С‡РёРєРё РєРЅРѕРїРѕРє
+в”‚   в”њв”Ђв”Ђ middleware.py          # РїСЂРѕРІРµСЂРєР° Р°РґРјРёРЅРѕРІ
+в”‚   в””в”Ђв”Ђ notifier.py            # РѕС‚РїСЂР°РІРєР° Р°Р»РµСЂС‚РѕРІ
+в”њв”Ђв”Ђ crypto/x25519.py           # X25519 РґР»СЏ Reality
+в”њв”Ђв”Ђ discovery.py               # Р°РІС‚РѕРѕР±РЅР°СЂСѓР¶РµРЅРёРµ
+в”њв”Ђв”Ђ database.py                # SQLite
+в”њв”Ђв”Ђ config.py                  # pydantic-settings
+в””в”Ђв”Ђ main.py                    # С‚РѕС‡РєР° РІС…РѕРґР°
 ```
 
-## Лицензия
+---
+
+## вќ¤пёЏ Community
+
+РЎРґРµР»Р°РЅРѕ РґР»СЏ СЃРёРєСЂРµС‚РЅРѕРІР° С‡Р°С‚РёРєР° РєР°РјСѓРЅРёС‚Рё Remnawave
+
+---
+
+## рџ“„ Р›РёС†РµРЅР·РёСЏ
 
 MIT
